@@ -1,0 +1,82 @@
+Centralized API Gateway Ownership Model for AWS Cloud
+Executive Summary
+As the organization migrates from WSO2 Gateway (on-prem) to AWS API Gateway (cloud), it is critical that the Enterprise Integration Platform (EIP) team maintains centralized ownership of API Gateway infrastructure.
+
+While API Gateway instances will exist in each AWS account for isolation and scalability, configuration and governance must remain centrally controlled.
+
+API Gateway is part of the enterprise security and traffic control plane—not an application component.
+Control Plane vs Data Plane
+Control Plane (Platform Team Owned)
+AWS API Gateway, Lambda Authorizer, IAM policies, JWT validation, throttling policies, routing enforcement, WAF integration, and Terraform modules.
+Data Plane (Application Team Owned)
+Lambda functions, Step Functions workflows, DynamoDB / RDS / S3, business logic, and OpenAPI contract definition.
+Security Risk: Authentication Misconfiguration Example
+Application team mistake:
+resource "aws_apigatewayv2_route" "insecure_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /customer"
+  authorization_type = "NONE"
+}
+Correct platform-controlled implementation:
+resource "aws_apigatewayv2_route" "secure_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /customer"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt_authorizer.id
+}
+JWT Validation Misconfiguration Risk
+Application team mistake:
+jwt_configuration {
+ issuer   = "https://wrong-issuer.com"
+ audience = ["any"]
+}
+Platform team enforcement:
+jwt_configuration {
+ issuer   = "https://login.microsoftonline.com/<tenant>/v2.0"
+ audience = ["enterprise-api"]
+}
+Backend Exposure Risk
+Application team mistake exposing Lambda publicly:
+resource "aws_lambda_function_url" "dangerous" {
+ function_name = aws_lambda_function.backend.function_name
+ authorization_type = "NONE"
+}
+Correct secure access via API Gateway only.
+IAM Privilege Escalation Risk
+Application team mistake:
+Action = "*"
+Resource = "*" 
+Platform team least privilege enforcement:
+Action = ["dynamodb:GetItem"]
+Resource = aws_dynamodb_table.customer.arn
+Platform-Owned Terraform Gateway Module
+module "api_gateway" {
+ source = "git::ssh://git.enterprise/api-platform-modules/apigateway"
+ api_name         = var.api_name
+ jwt_issuer       = var.jwt_issuer
+ jwt_audience     = var.jwt_audience
+ enable_waf       = true
+ enable_logging   = true
+ enable_throttle  = true
+}
+Cross-Account Secure Deployment Role
+resource "aws_iam_role" "api_platform_deploy_role" {
+ assume_role_policy = jsonencode({
+  Statement = [{
+   Effect = "Allow"
+   Principal = {
+    Federated = "arn:aws:iam::<account>:oidc-provider/token.actions.githubusercontent.com"
+   }
+   Action = "sts:AssumeRoleWithWebIdentity"
+  }]
+ })
+}
+Compliance Requirements
+Centralized ownership ensures compliance with SOC2, PCI DSS, SOX, and FFIEC requirements.
+Ownership Model Recommendation
+Platform Team Owns:
+API Gateway, Lambda Authorizer, IAM policies, Terraform modules, authentication enforcement, routing policies, deployment pipeline.
+Application Teams Own:
+Business Lambda, Step Functions, database, and OpenAPI contract.
+Final Recommendation
+The Enterprise Integration Platform team must maintain centralized ownership of AWS API Gateway to ensure security, compliance, operational stability, and enterprise scalability.
